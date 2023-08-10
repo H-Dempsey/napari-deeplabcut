@@ -14,6 +14,7 @@ from napari.types import LayerData
 from natsort import natsorted
 
 from napari_deeplabcut import misc
+from napari_video.napari_video import VideoReaderNP
 
 SUPPORTED_IMAGES = ".jpg", ".jpeg", ".png"
 SUPPORTED_VIDEOS = ".mp4", ".mov", ".avi"
@@ -231,56 +232,9 @@ def read_hdf(filename: str) -> List[LayerData]:
     return layers
 
 
-class Video:
-    def __init__(self, video_path):
-        if not os.path.isfile(video_path):
-            raise ValueError(f'Video path "{video_path}" does not point to a file.')
-
-        self.path = video_path
-        self.stream = cv2.VideoCapture(video_path)
-        if not self.stream.isOpened():
-            raise OSError("Video could not be opened.")
-
-        self._n_frames = int(self.stream.get(cv2.CAP_PROP_FRAME_COUNT))
-        self._width = int(self.stream.get(cv2.CAP_PROP_FRAME_WIDTH))
-        self._height = int(self.stream.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        self._frame = cv2.UMat(self._height, self._width, cv2.CV_8UC3)
-
-    def __len__(self):
-        return self._n_frames
-
-    @property
-    def width(self):
-        return self._width
-
-    @property
-    def height(self):
-        return self._height
-
-    def set_to_frame(self, ind):
-        ind = min(ind, len(self) - 1)
-        ind += 1  # Unclear why this is needed at all
-        self.stream.set(cv2.CAP_PROP_POS_FRAMES, ind)
-
-    def read_frame(self):
-        self.stream.retrieve(self._frame)
-        cv2.cvtColor(self._frame, cv2.COLOR_BGR2RGB, self._frame, 3)
-        return self._frame.get()
-
-    def close(self):
-        self.stream.release()
-
-
 def read_video(filename: str, opencv: bool = True):
     if opencv:
-        stream = Video(filename)
-        shape = stream.width, stream.height, 3
-
-        def _read_frame(ind):
-            stream.set_to_frame(ind)
-            return stream.read_frame()
-
-        lazy_imread = delayed(_read_frame)
+        movie = VideoReaderNP(filename)
     else:  # pragma: no cover
         from pims import PyAVReaderIndexed
 
@@ -292,12 +246,12 @@ def read_video(filename: str, opencv: bool = True):
         shape = stream.frame_shape
         lazy_imread = delayed(stream.get_frame)
 
-    movie = da.stack(
-        [
-            da.from_delayed(lazy_imread(i), shape=shape, dtype=np.uint8)
-            for i in range(len(stream))
-        ]
-    )
+        movie = da.stack(
+            [
+                da.from_delayed(lazy_imread(i), shape=shape, dtype=np.uint8)
+                for i in range(len(stream))
+            ]
+        )
     elems = list(Path(filename).parts)
     elems[-2] = "labeled-data"
     elems[-1] = elems[-1].split(".")[0]
